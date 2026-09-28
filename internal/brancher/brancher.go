@@ -40,12 +40,9 @@ func BranchAndBound(ip *common.IntegerProgram, config *common.SolverConfig) erro
 	}
 
 	if rootNode.IsInteger {
-		solution, objVal, err := verifiedIncumbent(ip, rootNode.SCF)
-		if err != nil {
+		if err := acceptIncumbent(ip, rootNode.SCF, config); err != nil {
 			return err
 		}
-		ip.BestObj = objVal
-		ip.BestSolution = solution
 		*ip.SCF.Status = common.SolverStatusOptimal
 		return nil
 	}
@@ -70,7 +67,7 @@ func BranchAndBound(ip *common.IntegerProgram, config *common.SolverConfig) erro
 // much tighter: the simplex accepts rows violated by up to 1e-8, so a child LP can
 // land just outside its own branch bound, and with 1e-12 branch-and-bound
 // re-branched on such a value forever. Integer solutions are still checked
-// exactly before they are accepted, see verifiedIncumbent.
+// exactly before they are accepted, see acceptIncumbent.
 const integralityTolerance = 1e-9
 
 // isIntegral reports whether val is an integer within integralityTolerance

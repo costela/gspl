@@ -1,6 +1,7 @@
 package brancher
 
 import (
+	"fmt"
 	"math"
 	"math/big"
 	"strconv"
@@ -10,25 +11,37 @@ import (
 	"gonum.org/v1/gonum/mat"
 )
 
-// verifiedIncumbent returns the candidate integer solution of scf together with
-// its objective value in the original sense, checked against the original
-// program ip.SCF.
+// acceptIncumbent makes the candidate integer solution of scf the incumbent if
+// it improves on it. The incumbent is kept in the original sense, and any
+// improvement counts.
 //
-// Pure integer programs are checked exactly (see verifyIntegerSolution), and a
-// candidate that fails the check is an error rather than a solution. With
-// continuous variables the candidate is only as exact as the float simplex.
-func verifiedIncumbent(ip *common.IntegerProgram, scf *common.StandardComputationalForm) (*mat.VecDense, float64, error) {
+// Pure integer programs are checked exactly against the original program ip.SCF
+// first (see verifyIntegerSolution), and a candidate that fails the check is an
+// error rather than a solution. With continuous variables the candidate is only
+// as exact as the float simplex.
+func acceptIncumbent(ip *common.IntegerProgram, scf *common.StandardComputationalForm, config *common.SolverConfig) error {
 	solution, obj := scf.PrimalSolution, *scf.ObjectiveValue
 	if isPureInteger(ip.SCF) {
 		var ok bool
 		if solution, obj, ok = verifyIntegerSolution(ip.SCF, scf.PrimalSolution); !ok {
-			return nil, 0, errors.New(errors.ErrNumericalFailure, "integer candidate is infeasible when checked exactly", nil)
+			return errors.New(errors.ErrNumericalFailure, "integer candidate is infeasible when checked exactly", nil)
 		}
 	}
 	if scf.IsMaximization {
 		obj = -obj
 	}
-	return solution, obj, nil
+
+	ip.BestMutex.Lock()
+	defer ip.BestMutex.Unlock()
+	if ip.BestSolution == nil ||
+		(scf.IsMaximization && obj > ip.BestObj) ||
+		(!scf.IsMaximization && obj < ip.BestObj) {
+		ip.BestObj, ip.BestSolution = obj, solution
+		if config.Debug {
+			fmt.Printf("[DEBUG] New Best Obj: %.4f\n", ip.BestObj)
+		}
+	}
+	return nil
 }
 
 // isPureInteger reports whether every non-slack column of scf is integer or binary.

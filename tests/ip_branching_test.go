@@ -1,10 +1,12 @@
 package tests
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/chriso345/gore/assert"
+	"github.com/chriso345/gspl/internal/concurrency"
 	"github.com/chriso345/gspl/lp"
 	"github.com/chriso345/gspl/solver"
 )
@@ -181,4 +183,46 @@ func Test_IPChildFailureIsNotSilent(t *testing.T) {
 	// Brute force over x_i in 0..5: optimum (0, 0, 3, 5) with objective -12.1
 	assert.Equal(t, sol.Status.String(), lp.LpStatusOptimal.String())
 	assert.IsClose(t, sol.ObjectiveValue, -12.1, 1e-5)
+}
+
+// A better integer solution must win however close it is to the incumbent:
+// neither the incumbent update nor pruning may give up optimality for a tolerance.
+func Test_IPOptimalityWithoutTolerance(t *testing.T) {
+	// Solve serially so the worse solution (x = 1, y = 0) is found first
+	prev := atomic.LoadInt32(&concurrency.MAX_GOROUTINES)
+	atomic.StoreInt32(&concurrency.MAX_GOROUTINES, 0)
+	defer atomic.StoreInt32(&concurrency.MAX_GOROUTINES, prev)
+
+	// max x + (1+5e-7) y  s.t. x + y <= 1.5, x <= 1, y <= 1
+	// Integer points: x = 1, y = 0 with objective 1 and x = 0, y = 1 with 1.0000005.
+	build := func(vars []lp.LpVariable, extra ...float64) *lp.LinearProgram {
+		prog := lp.NewLinearProgram("close call", vars)
+		prog.AddObjective(lp.LpMaximise, linExpr(vars, append([]float64{1, 1 + 5e-7}, extra...)...))
+		prog.AddConstraint(linExpr(vars, 1, 1), lp.LpConstraintLE, 1.5)
+		prog.AddConstraint(linExpr(vars, 1, 0), lp.LpConstraintLE, 1)
+		prog.AddConstraint(linExpr(vars, 0, 1), lp.LpConstraintLE, 1)
+		return &prog
+	}
+	x := lp.NewVariable("x", lp.LpCategoryInteger)
+	y := lp.NewVariable("y", lp.LpCategoryInteger)
+
+	t.Run("incumbent update", func(t *testing.T) {
+		// x = 0, y = 1 is reached as an integer node after x = 1, y = 0
+		sol, err := solver.Solve(build([]lp.LpVariable{x, y}))
+		assert.Nil(t, err)
+		assert.Equal(t, sol.ObjectiveValue, 1+5e-7)
+		assert.Equal(t, sol.PrimalSolution.AtVec(1), 1.0)
+	})
+
+	t.Run("pruning", func(t *testing.T) {
+		// With max ... + 1e-8 w and 2w <= 1, x = 0, y = 1 sits under the
+		// fractional node w = 0.5, whose bound is less than 1e-6 above the incumbent
+		vars := []lp.LpVariable{x, y, lp.NewVariable("w", lp.LpCategoryInteger)}
+		prog := build(vars, 1e-8)
+		prog.AddConstraint(linExpr(vars, 0, 0, 2), lp.LpConstraintLE, 1)
+		sol, err := solver.Solve(prog)
+		assert.Nil(t, err)
+		assert.Equal(t, sol.ObjectiveValue, 1+5e-7)
+		assert.Equal(t, sol.PrimalSolution.AtVec(1), 1.0)
+	})
 }

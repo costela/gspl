@@ -45,17 +45,16 @@ func branchAndBoundParallel(ip *common.IntegerProgram, rootNode *common.Node, co
 			fmt.Printf("[DEBUG] Primal Solution: %v\n", node.SCF.PrimalSolution)
 		}
 		if node.IsInteger {
-			objVal := *node.SCF.ObjectiveValue
-			// Flip to original sense if this SCF represents a maximisation
-			if node.SCF.IsMaximization {
-				objVal = -objVal
+			solution, objVal, err := verifiedIncumbent(ip, node.SCF)
+			if err != nil {
+				return err
 			}
 			// protect BestObj update
 			ip.BestMutex.Lock()
 			// If no best solution yet, accept this one
 			if ip.BestSolution == nil {
 				ip.BestObj = objVal
-				ip.BestSolution = node.SCF.PrimalSolution
+				ip.BestSolution = solution
 				if config.Debug {
 					fmt.Printf("[DEBUG] New Best Obj: %.4f\n", ip.BestObj)
 				}
@@ -66,7 +65,7 @@ func branchAndBoundParallel(ip *common.IntegerProgram, rootNode *common.Node, co
 			if node.SCF.IsMaximization {
 				if objVal > ip.BestObj+config.Tolerance {
 					ip.BestObj = objVal
-					ip.BestSolution = node.SCF.PrimalSolution
+					ip.BestSolution = solution
 					if config.Debug {
 						fmt.Printf("[DEBUG] New Best Obj: %.4f\n", ip.BestObj)
 					}
@@ -74,7 +73,7 @@ func branchAndBoundParallel(ip *common.IntegerProgram, rootNode *common.Node, co
 			} else {
 				if objVal < ip.BestObj-config.Tolerance {
 					ip.BestObj = objVal
-					ip.BestSolution = node.SCF.PrimalSolution
+					ip.BestSolution = solution
 					if config.Debug {
 						fmt.Printf("[DEBUG] New Best Obj: %.4f\n", ip.BestObj)
 					}

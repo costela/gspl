@@ -126,3 +126,27 @@ func TestDefaultBranch_NoSuitableDueToContinuous(t *testing.T) {
 		t.Fatalf("expected error due to no suitable branching variable")
 	}
 }
+
+// A near-integral value must not be picked over a genuinely fractional one.
+func TestDefaultBranch_SkipsNearIntegral(t *testing.T) {
+	scf := &common.StandardComputationalForm{
+		PrimalSolution: mat.NewVecDense(2, []float64{0.99999999999999989, 2.5}),
+		Constraints:    mat.NewDense(1, 2, []float64{0, 0}),
+		RHS:            mat.NewVecDense(1, []float64{0}),
+		Objective:      mat.NewVecDense(2, []float64{0, 0}),
+		ObjectiveValue: new(float64),
+		Status:         new(common.SolverStatus),
+		SlackIndices:   []int{-1, -1},
+		VarCategories:  []common.VarCategory{common.VarCategoryInteger, common.VarCategoryInteger},
+	}
+
+	children, err := DefaultBranch(&common.Node{SCF: scf})
+	assert.Nil(t, err)
+	assert.Equal(t, len(children), 2)
+
+	down := children[1].SCF
+	r := down.Constraints.RawMatrix().Rows - 1
+	assert.Equal(t, down.Constraints.At(r, 0), 0.0)
+	assert.Equal(t, down.Constraints.At(r, 1), 1.0)
+	assert.Equal(t, down.RHS.AtVec(r), 2.0)
+}

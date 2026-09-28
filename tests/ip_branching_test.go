@@ -2,6 +2,7 @@ package tests
 
 import (
 	"testing"
+	"time"
 
 	"github.com/chriso345/gore/assert"
 	"github.com/chriso345/gspl/lp"
@@ -67,5 +68,86 @@ func Test_IPBranchingBoundsVariable(t *testing.T) {
 		assert.Equal(t, sol.Status.String(), lp.LpStatusOptimal.String())
 		assert.IsClose(t, sol.ObjectiveValue, 3, 1e-5)
 		assert.IsClose(t, sol.PrimalSolution.AtVec(0), 3, 1e-5)
+	})
+}
+
+// Simplex returns integral values a few ulps off (e.g. 0.99999999999999989).
+// Integrality checks must allow for that instead of branching on them again,
+// which adds a row per level and never terminates.
+func Test_IPIntegralityTolerance(t *testing.T) {
+	vars := []lp.LpVariable{
+		lp.NewVariable("x0", lp.LpCategoryInteger),
+		lp.NewVariable("x1", lp.LpCategoryInteger),
+		lp.NewVariable("x2", lp.LpCategoryInteger),
+	}
+	prog := lp.NewLinearProgram("near integral", vars)
+	prog.AddObjective(lp.LpMinimise, linExpr(vars, -4.1, 5.4, -2.9))
+	prog.AddConstraint(linExpr(vars, -3.6, -8.3, 2.6), lp.LpConstraintLE, 14.8)
+	prog.AddConstraint(linExpr(vars, 1, 0, 0), lp.LpConstraintLE, 7)
+	prog.AddConstraint(linExpr(vars, 0, 1, 0), lp.LpConstraintLE, 7)
+	prog.AddConstraint(linExpr(vars, 0, 0, 1), lp.LpConstraintLE, 7)
+
+	type result struct {
+		sol *solver.Solution
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		sol, err := solver.Solve(&prog)
+		done <- result{sol, err}
+	}()
+
+	select {
+	case r := <-done:
+		// Brute force over x_i in 0..7: optimum (7, 0, 7) with objective -49
+		assert.Nil(t, r.err)
+		assert.Equal(t, r.sol.Status.String(), lp.LpStatusOptimal.String())
+		assert.IsClose(t, r.sol.ObjectiveValue, -49, 1e-5)
+		assert.IsClose(t, r.sol.PrimalSolution.AtVec(0), 7, 1e-5)
+		assert.IsClose(t, r.sol.PrimalSolution.AtVec(1), 0, 1e-5)
+		assert.IsClose(t, r.sol.PrimalSolution.AtVec(2), 7, 1e-5)
+	case <-time.After(10 * time.Second):
+		t.Fatal("branch and bound did not terminate within 10s")
+	}
+}
+
+// An integer solution is only accepted after an exact check against the
+// original rows, so a relaxation value that is merely close to an integer
+// cannot be reported as an optimum it does not satisfy.
+func Test_IPExactAcceptance(t *testing.T) {
+	t.Run("near-integral but infeasible", func(t *testing.T) {
+		// LP relaxation: x = 0.99999999996666..., within the integrality tolerance
+		// of 1, but x = 1 violates 3x <= 2.9999999999. The float simplex cannot
+		// settle this (it also accepts the branch x >= 1), so the solve must fail
+		// rather than report x = 1.
+		vars := []lp.LpVariable{lp.NewVariable("x", lp.LpCategoryInteger)}
+		prog := lp.NewLinearProgram("near integral", vars)
+		prog.AddObjective(lp.LpMaximise, linExpr(vars, 1))
+		prog.AddConstraint(linExpr(vars, 3), lp.LpConstraintLE, 2.9999999999)
+
+		sol, err := solver.Solve(&prog)
+		if err == nil {
+			t.Fatalf("expected an error, got status=%v x=%v obj=%v", sol.Status, sol.PrimalSolution.AtVec(0), sol.ObjectiveValue)
+		}
+	})
+
+	t.Run("decimal coefficients", func(t *testing.T) {
+		// 0.1 + 0.2 <= 0.3 holds as written, although not for the float64 values.
+		vars := []lp.LpVariable{
+			lp.NewVariable("x", lp.LpCategoryInteger),
+			lp.NewVariable("y", lp.LpCategoryInteger),
+		}
+		prog := lp.NewLinearProgram("decimal", vars)
+		prog.AddObjective(lp.LpMaximise, linExpr(vars, 1, 1))
+		prog.AddConstraint(linExpr(vars, 0.1, 0.2), lp.LpConstraintLE, 0.3)
+		prog.AddConstraint(linExpr(vars, 1, 0), lp.LpConstraintLE, 1)
+		prog.AddConstraint(linExpr(vars, 0, 1), lp.LpConstraintLE, 1)
+
+		sol, err := solver.Solve(&prog)
+		assert.Nil(t, err)
+		assert.Equal(t, sol.Status.String(), lp.LpStatusOptimal.String())
+		assert.Equal(t, sol.ObjectiveValue, 2.0)
+		assert.Equal(t, sol.PrimalSolution.AtVec(0), 1.0)
+		assert.Equal(t, sol.PrimalSolution.AtVec(1), 1.0)
 	})
 }

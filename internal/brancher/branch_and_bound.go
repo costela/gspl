@@ -102,11 +102,19 @@ func branchAndBoundParallel(ip *common.IntegerProgram, rootNode *common.Node, co
 		}
 	}
 
+	// Wait for every child, then report the first failure: a dropped subtree
+	// could hide the optimum.
+	var firstErr error
 	for range nodes {
 		r := <-results
-		if r.err != nil && config.Logging {
-			fmt.Printf("Error in branchAndBoundParallel: %v\n", r.err)
+		if r.err != nil {
+			if config.Logging {
+				fmt.Printf("Error in branchAndBoundParallel: %v\n", r.err)
+			}
+			if firstErr == nil {
+				firstErr = r.err
+			}
 		}
 	}
-	return nil
+	return firstErr
 }

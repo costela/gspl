@@ -151,3 +151,34 @@ func Test_IPExactAcceptance(t *testing.T) {
 		assert.Equal(t, sol.PrimalSolution.AtVec(1), 1.0)
 	})
 }
+
+// A child LP that fails (here: simplex iteration limit, as there is no
+// anti-cycling rule yet) must fail the solve. Dropping its subtree silently
+// reported this feasible IP as infeasible.
+func Test_IPChildFailureIsNotSilent(t *testing.T) {
+	vars := []lp.LpVariable{
+		lp.NewVariable("x0", lp.LpCategoryInteger),
+		lp.NewVariable("x1", lp.LpCategoryInteger),
+		lp.NewVariable("x2", lp.LpCategoryInteger),
+		lp.NewVariable("x3", lp.LpCategoryInteger),
+	}
+	prog := lp.NewLinearProgram("child failure", vars)
+	prog.AddObjective(lp.LpMinimise, linExpr(vars, -3.8, -5.8, 5.3, -5.6))
+	prog.AddConstraint(linExpr(vars, -9.1, -7.3, -8.4, 6), lp.LpConstraintGE, 3.6)
+	prog.AddConstraint(linExpr(vars, 7.9, -8.7, -0.8, 3.1), lp.LpConstraintLE, 13.1)
+	prog.AddConstraint(linExpr(vars, 5.5, 9.6, -9.3, 4.4), lp.LpConstraintLE, 4.4)
+	for i := range vars {
+		coefs := make([]float64, len(vars))
+		coefs[i] = 1
+		prog.AddConstraint(linExpr(vars, coefs...), lp.LpConstraintLE, 5)
+	}
+
+	sol, err := solver.Solve(&prog)
+	if err != nil {
+		t.Logf("solve failed loudly: %v", err)
+		return
+	}
+	// Brute force over x_i in 0..5: optimum (0, 0, 3, 5) with objective -12.1
+	assert.Equal(t, sol.Status.String(), lp.LpStatusOptimal.String())
+	assert.IsClose(t, sol.ObjectiveValue, -12.1, 1e-5)
+}

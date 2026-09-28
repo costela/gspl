@@ -33,12 +33,14 @@ func TestDefaultBranch_HappyPath(t *testing.T) {
 	rhs := down.SCF.RHS.AtVec(r)
 	assert.Equal(t, rhs, 2.0)
 
-	// Check up (dir 2) has a -1 at column 1 and RHS -3 (-(int+1))
+	// Check up (dir 2) is x1 - s = 3 (int+1) with a surplus in the new column
 	r2 := up.SCF.Constraints.RawMatrix().Rows - 1
 	val2 := up.SCF.Constraints.At(r2, 1)
-	assert.Equal(t, val2, -1.0)
+	assert.Equal(t, val2, 1.0)
+	surplus := up.SCF.Constraints.At(r2, up.SCF.Constraints.RawMatrix().Cols-1)
+	assert.Equal(t, surplus, -1.0)
 	rhs2 := up.SCF.RHS.AtVec(r2)
-	assert.Equal(t, rhs2, -3.0)
+	assert.Equal(t, rhs2, 3.0)
 }
 
 func TestDefineStrategies_SetsDefaultsOrUsesProvided(t *testing.T) {
